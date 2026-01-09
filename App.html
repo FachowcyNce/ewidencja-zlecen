@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ewidencja Zleceń</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#222">
+
+<!-- Biblioteki -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+<style>
+body{font-family:Arial,Helvetica,sans-serif;margin:0;background:#f4f4f4}
+header{background:#222;color:#fff;padding:10px;text-align:center}
+main{padding:15px}
+.card{background:#fff;padding:15px;margin-bottom:15px;border-radius:6px;box-shadow:0 2px 5px rgba(0,0,0,.1)}
+label{font-size:13px;color:#333;display:block;margin-top:10px}
+input,textarea,button{width:100%;padding:10px;margin-top:5px}
+button{background:#007bff;color:#fff;border:none;border-radius:4px;margin-top:10px}
+button.secondary{background:#555}
+.hidden{display:none}
+.small{font-size:12px;color:#666}
+
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{border:1px solid #ccc;padding:6px;text-align:left}
+th{background:#eee}
+
+#invoice{width:210mm;padding:20mm;font-size:14px;background:#fff;color:#000;display:none;box-sizing:border-box}
+
+@media (max-width:768px){
+ table{font-size:12px}
+ th,td{padding:4px}
+ button{font-size:15px;padding:14px}
+ textarea{min-height:90px}
+}
+</style>
+</head>
+<body>
+<header><h2>Ewidencja Zleceń</h2></header>
+<main>
+
+<div id="login" class="card">
+<h3>Logowanie</h3>
+<p class="small">Logujesz się jako: <b id="loginUserName">(brak konta)</b></p>
+<label>PIN (4 cyfry)</label>
+<input id="loginPin" type="password" maxlength="4">
+<button onclick="loginUser()">Zaloguj</button>
+<p class="small">Pierwsze użycie? <a href="#" onclick="showRegister()">Utwórz konto</a></p>
+</div>
+
+<div id="register" class="card hidden">
+<h3>Nowe konto</h3>
+<label>Imię i nazwisko / nazwa wykonawcy</label>
+<input id="regName">
+<label>Dane adresowe / kontaktowe</label>
+<textarea id="regData"></textarea>
+<label>PIN (4 cyfry)</label>
+<input id="regPin" type="password" maxlength="4">
+<button onclick="registerUser()">Zapisz konto</button>
+</div>
+
+<div id="panel" class="hidden">
+<div class="card">
+<h3>Nowe zlecenie</h3>
+<label>Klient</label><input id="client">
+<label>Adres</label><textarea id="address"></textarea>
+<label>Opis prac</label><textarea id="desc"></textarea>
+<label>Data od</label><input id="from" type="date">
+<label>Data do</label><input id="to" type="date">
+<label>Robocizna (zł)</label><input id="labor" type="number">
+<label>Materiały (zł)</label><input id="material" type="number">
+<button onclick="addJob()">Dodaj zlecenie</button>
+</div>
+
+<div class="card">
+<h3>Zlecenia</h3>
+<table>
+<thead><tr><th>Klient</th><th>Adres</th><th>Od</th><th>Do</th><th>Robocizna</th><th>Materiały</th><th>Suma</th><th>Status</th><th>Akcje</th></tr></thead>
+<tbody id="jobs"></tbody>
+</table>
+</div>
+
+<div class="card">
+<h3>Podsumowanie</h3>
+<p>Suma robocizny: <b id="laborSum">0.00 zł</b></p>
+<p class="small">Limit działalności nierejestrowanej: 10 800 zł</p>
+<button onclick="exportExcel()">Eksport do Excel</button>
+</div>
+
+<button class="secondary" onclick="logout()">Wyloguj</button>
+</div>
+</main>
+
+<div id="invoice"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+let user=null;
+
+const savedUser = JSON.parse(localStorage.getItem('user'));
+if(savedUser) $('loginUserName').innerText=savedUser.name;
+
+function showRegister(){ $('login').classList.add('hidden'); $('register').classList.remove('hidden'); }
+
+function registerUser(){
+ const name=$('regName').value.trim();
+ const pin=$('regPin').value;
+ if(!name||pin.length!==4){alert('Błędne dane');return}
+ localStorage.setItem('user',JSON.stringify({name,pin,data:$('regData').value,jobs:[]}));
+ location.reload();
+}
+
+function loginUser(){
+ const d=JSON.parse(localStorage.getItem('user'));
+ if(!d){alert('Brak konta');return}
+ if($('loginPin').value===d.pin){
+  user=d;
+  $('login').classList.add('hidden');
+  $('panel').classList.remove('hidden');
+  renderJobs();
+ } else alert('Błędny PIN');
+}
+
+function addJob(){
+ user.jobs.push({
+  client:$('client').value,
+  address:$('address').value,
+  desc:$('desc').value,
+  from:$('from').value,
+  to:$('to').value,
+  labor:+$('labor').value||0,
+  material:+$('material').value||0,
+  status:'W trakcie'
+ });
+ localStorage.setItem('user',JSON.stringify(user));
+ renderJobs();
+}
+
+function renderJobs(){
+ const el=$('jobs'); el.innerHTML=''; let total=0;
+ user.jobs.forEach((j,i)=>{
+  total+=j.labor; const sum=j.labor+j.material;
+  el.innerHTML+=`<tr>
+<td>${j.client}</td><td>${j.address}</td><td>${j.from}</td><td>${j.to}</td>
+<td>${j.labor.toFixed(2)}</td><td>${j.material.toFixed(2)}</td><td>${sum.toFixed(2)}</td>
+<td style="color:${j.status==='Zrealizowane'?'green':'orange'};font-weight:bold">${j.status}</td>
+<td><button onclick="toggleStatus(${i})">Status</button><button onclick="editJob(${i})">Edytuj</button><button onclick="generatePDF(${i})">PDF</button></td></tr>`;
+ });
+ $('laborSum').innerText=total.toFixed(2)+' zł'; $('laborSum').style.color=total>10800?'red':'green';
+}
+
+function editJob(i){ const j=user.jobs[i]; $('client').value=j.client; $('address').value=j.address; $('desc').value=j.desc; $('from').value=j.from; $('to').value=j.to; $('labor').value=j.labor; $('material').value=j.material; user.jobs.splice(i,1); localStorage.setItem('user',JSON.stringify(user)); renderJobs(); }
+
+function toggleStatus(i){ user.jobs[i].status=user.jobs[i].status==='W trakcie'?'Zrealizowane':'W trakcie'; localStorage.setItem('user',JSON.stringify(user)); renderJobs(); }
+
+function generatePDF(i){ const j=user.jobs[i]; const sum=j.labor+j.material; const inv=$('invoice'); inv.innerHTML=`<h2 style='text-align:center'>Rachunek / Potwierdzenie</h2><p><b>Wykonawca:</b> ${user.name}<br>${user.data||''}</p><p><b>Klient:</b> ${j.client}<br>${j.address}</p><p>${j.desc}</p><p>${j.from} – ${j.to}</p><p>Robocizna: ${j.labor.toFixed(2)} zł<br>Materiały: ${j.material.toFixed(2)} zł</p><h3>SUMA: ${sum.toFixed(2)} zł</h3><p>Status: ${j.status}</p>`; inv.style.position='fixed'; inv.style.left='-9999px'; inv.style.display='block'; html2canvas(inv,{scale:2}).then(c=>{const pdf=new window.jspdf.jsPDF('p','mm','a4'); pdf.addImage(c.toDataURL('image/png'),'PNG',0,0,210,297); pdf.save(`rachunek_${j.client}.pdf`); inv.style.display='none';}); }
+
+function exportExcel(){ let csv=['Klient;Adres;Od;Do;Robocizna;Materiały;Suma;Status']; user.jobs.forEach(j=>{const s=j.labor+j.material; csv.push([j.client,j.address,j.from,j.to,j.labor.toFixed(2),j.material.toFixed(2),s.toFixed(2),j.status].join(';'))}); const blob=new Blob(["\uFEFF"+csv.join("\n")],{type:'text/csv;charset=utf-8;'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='raport_zlecen.csv'; a.click(); }
+
+function logout(){ location.reload(); }
+</script>
+</body>
+</html>
